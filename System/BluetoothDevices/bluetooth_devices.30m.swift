@@ -1,17 +1,20 @@
 #!/usr/bin/env xcrun swift
 
 /*
- * <bitbar.title>Bluetooth Battery Level</bitbar.title>
+ * <bitbar.title>Bluetooth Battery</bitbar.title>
  * <bitbar.version>v1.0</bitbar.version>
  * <bitbar.author>Timothy Barnard</bitbar.author>
  * <bitbar.author.github>collegboi</bitbar.author.github>
  * <bitbar.desc>Displays a list of bluetooth devices and battery status</bitbar.desc>
+ *<bitbar.image>https://raw.githubusercontent.com/collegboi/my-bitbar-plugins/master/BluetoothBattery/Battery.png</bitbar.image>
  * <bitbar.dependencies>Xcode,swift</bitbar.dependencies>
+
  */
 
 import Foundation
 
 typealias Color = (red : UInt, green : UInt, blue : UInt)
+var stringSpacing: Int = 0
 
 struct Device {
     var name: String
@@ -20,6 +23,7 @@ struct Device {
     var ansiColorString: String
     var connected: Bool
     var paired: Bool
+    var extraData: [String]
     
     init() {
         name = ""
@@ -28,6 +32,7 @@ struct Device {
         ansiColorString = ""
         connected = false
         paired = false
+        extraData = [String]()
     }
 }
 
@@ -163,22 +168,49 @@ func parseDeviceObject(_ deviceObj: [String:Any] ) -> (c: String, p: String, b: 
     return( connected, paired, statusString, colorString, ansiColor )
 }
 
-func macbookBattery() -> (c: String, s: String, a: String) {
-    
-    var percentAsDouble = 0.0
-    
-    let currentPowerCommand = "system_profiler SPPowerDataType | grep 'Charge Remaining' | awk '{print $4}'"
-    let fullPowerCommand = "system_profiler SPPowerDataType | grep 'Full Charge Capacity' | awk '{print $5}'"
-    let currentCapacityString = shell(args: currentPowerCommand)
-    let fullCapacityString = shell(args: fullPowerCommand)
-    
-    if let current = Int(currentCapacityString), let full = Int(fullCapacityString) {
-        percentAsDouble = (Double(current)/Double(full)*100)
+extension String {
+    func chopPrefix(_ count: Int = 1) -> String {
+        if self.isEmpty {
+            return ""
+        }
+        return substring(from: index(startIndex, offsetBy: count))
     }
     
-    let percentString = String(Int(floor(percentAsDouble)))
-    let (colorString, dropdownString, ansiColor) = calculateColorStrings(percentString: percentString)
-    return (colorString, dropdownString, ansiColor)
+    func chopSuffix(_ count: Int = 1) -> String {
+        if self.isEmpty {
+            return ""
+        }
+        return substring(to: index(endIndex, offsetBy: -count))
+    }
+}
+
+func macbookBattery() -> (c: String, s: String, a: String, extra: [String]) {
+    
+    var extraData = [String]()
+    
+    let drawPowerCommand = "pmset -g batt | grep 'Now drawing' | awk '{print $4}'"
+    let currentPowerCommand = "pmset -g batt | grep 'Internal' | awk '{print $3}'"
+    let powerStatusCommand = "pmset -g batt | grep 'Internal' | awk '{print $4}'"
+    let powerRemainCommand = "pmset -g batt | grep 'Internal' | awk '{print $5}'"
+
+    let drawPowerString = shell(args: drawPowerCommand).chopPrefix(1)
+    let currentPowerString = shell(args: currentPowerCommand).chopSuffix(2)
+    let powerStatusString = shell(args: powerStatusCommand).chopSuffix(1)
+    let powerRemainString = shell(args: powerRemainCommand)
+    
+    extraData.append("Now drawing: \(drawPowerString)")
+    extraData.append("Status: \(powerStatusString)")
+    
+    if powerStatusString == "charging" {
+        extraData.append("Time until full: \(powerRemainString)")
+    } else {
+        extraData.append("Time left: \(powerRemainString)")
+    }
+    
+    
+    
+    let (colorString, dropdownString, ansiColor) = calculateColorStrings(percentString: currentPowerString)
+    return (colorString, dropdownString, ansiColor, extraData)
 }
 
 var allDevices = [Device]()
@@ -235,6 +267,10 @@ func xmlParsing(_ text: String) {
                     newDevice.paired = checkYesNoValues(paired)
                     newDevice.statusString = statusString
                     
+                    if deviceName.characters.count > stringSpacing {
+                        stringSpacing = deviceName.characters.count
+                    }
+                    
                     allDevices.append(newDevice)
                 }
             }
@@ -248,7 +284,7 @@ extension String {
     }
 }
 
-let (macColorString, macStatus, macAnsiColor) = macbookBattery()
+let (macColorString, macStatus, macAnsiColor, extraData) = macbookBattery()
 
 var macDevice = Device()
 macDevice.ansiColorString = macAnsiColor
@@ -257,6 +293,7 @@ macDevice.colorString = macColorString
 macDevice.connected = true
 macDevice.paired = true
 macDevice.statusString = macStatus
+macDevice.extraData = extraData
 allDevices.append(macDevice)
 
 var xmlString = bluetoothDevices()
@@ -267,10 +304,25 @@ print("Battery 🔋")
 print("---")
 
 for device in allDevices {
-    if device.connected {
-        print( "😀 " + device.name + ":".padding(length: 11) + device.statusString + "| font=Courier color=\(device.colorString)")
+    
+    let min: Int = 11
+    var spacing: Int = 0
+    if device.name.characters.count < stringSpacing {
+        let diff = stringSpacing - device.name.characters.count
+        spacing = diff + min
     } else {
-        print( "😔 " + device.name + ":".padding(length: 11) + device.statusString + "| font=Courier color=\(device.colorString)")
+        let diff = device.name.characters.count - stringSpacing
+        spacing = diff + min
+    }
+    
+    if device.connected {
+        print( "😀 " + device.name + ":".padding(length: spacing) + device.statusString + "| font=Courier color=\(device.colorString)")
+    } else {
+        print( "😔 " + device.name + ":".padding(length: spacing) + device.statusString + "| font=Courier color=\(device.colorString)")
+    }
+    
+    for data in device.extraData {
+        print("--\(data)")
     }
     
 }
